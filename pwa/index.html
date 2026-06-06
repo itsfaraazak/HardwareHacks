@@ -392,7 +392,7 @@ html,body{
     </div>
     <div class="conn-btns" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:8px">
       <button class="cbtn" id="btnWifi"   title="Connect ESP32 via WiFi">📡 WiFi</button>
-      <button class="cbtn" id="btnSerial" title="Connect Arduino Nano via USB cable (Chrome only)">🔌 USB Serial</button>
+      <button class="cbtn" id="btnSerial" title="Connect Arduino Uno via USB cable (Chrome/Edge only)">🔌 Connect Uno</button>
       <button class="cbtn" id="btnBle"    title="Connect ESP32 via Bluetooth">📶 BLE</button>
       <button class="cbtn" id="btnPhone"  title="Use phone accelerometer as stomp sensor">📱 Phone Stomp</button>
     </div>
@@ -667,8 +667,22 @@ $('btnPhone').onclick  = () => { bus.enablePhoneSensors(); $('btnPhone').classLi
 
 updateConnLabel();
 
-// Auto-try WiFi in background (silently fails if no ESP32)
-setTimeout(() => bus.connectWebSocket('ws://192.168.4.1:81'), 500);
+// Auto-prompt serial on page load if Web Serial available (Uno via USB)
+if ('serial' in navigator) {
+  // Attempt to reuse a previously-granted port without showing the picker
+  navigator.serial.getPorts().then(ports => {
+    if (ports.length === 1) {
+      ports[0].open({baudRate: 115200}).then(() => {
+        bus._serial = ports[0];
+        bus._serialWriter = ports[0].writable.getWriter();
+        bus.sources.serial = true;
+        bus._emit('connect', {source: 'serial'});
+        bus._emit('status', {text: 'Uno auto-connected via USB', source: 'serial'});
+        bus._readSerial(ports[0]);
+      }).catch(() => {});
+    }
+  }).catch(() => {});
+}
 
 // ── Message dispatch ──────────────────────────────────────
 function onMsg(m) {

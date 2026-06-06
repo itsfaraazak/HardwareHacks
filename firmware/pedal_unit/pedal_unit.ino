@@ -13,8 +13,10 @@
  *   - 1x 1000µF capacitor (WS2812 5V rail)
  *
  * Wiring:
- *   Throttle pot wiper  → GPIO4
- *   Brake pot wiper     → GPIO5
+ *   Throttle pot wiper  → GPIO4  (or via Nano 1 TX→GPIO17 Serial1)
+ *   Brake pot wiper     → GPIO5  (or via Nano 2 TX→GPIO18 Serial2)
+ *   Nano 1 TX (5V→3.3V divider) → GPIO17 (Serial1 RX)
+ *   Nano 2 TX (5V→3.3V divider) → GPIO18 (Serial2 RX)
  *   MPU-6050 SDA        → GPIO8
  *   MPU-6050 SCL        → GPIO9
  *   MPU-6050 VCC        → 3.3V
@@ -59,8 +61,13 @@ static const char* WS_HOST       = "192.168.4.1";
 static const uint16_t WS_PORT    = 81;
 
 // ─── Pin definitions ─────────────────────────────────────────────────────────
-static const int PIN_THROTTLE    = 4;
-static const int PIN_BRAKE       = 5;
+static const int PIN_THROTTLE    = 4;   // direct pot (unused if using Nanos)
+static const int PIN_BRAKE       = 5;   // direct pot (unused if using Nanos)
+
+// Nano serial bridges
+static const int PIN_NANO1_RX    = 17;  // Nano 1 TX → voltage divider → here
+static const int PIN_NANO2_RX    = 18;  // Nano 2 TX → voltage divider → here
+#define USE_NANO_PEDALS true            // set false to use direct pots instead
 static const int PIN_I2C_SDA     = 8;
 static const int PIN_I2C_SCL     = 9;
 static const int PIN_LED_DATA    = 10;
@@ -136,6 +143,7 @@ void connectWifi();
 void webSocketEvent(WStype_t type, uint8_t* payload, size_t length);
 void sendJson(const char* jsonStr);
 void handlePedals();
+void handleNanoSerial();
 void handleImu();
 void handleLeds();
 void handleMotors();
@@ -162,6 +170,10 @@ void setup() {
 
     // ADC resolution
     analogReadResolution(12);
+
+    // Nano serial bridges (9600 baud, RX-only)
+    Serial1.begin(9600, SERIAL_8N1, PIN_NANO1_RX, -1);
+    Serial2.begin(9600, SERIAL_8N1, PIN_NANO2_RX, -1);
 
     // I2C
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
@@ -227,7 +239,11 @@ void loop() {
 
     webSocket.loop();
 
-    handlePedals();
+    if (USE_NANO_PEDALS) {
+        handleNanoSerial();
+    } else {
+        handlePedals();
+    }
     handleImu();
     handleLeds();
     handleMotors();
@@ -348,6 +364,32 @@ void handlePedals() {
         sendJson(buf);
         lastBrake = b;
     }
+}
+
+// ─── Nano serial bridge — forward JSON lines from Nanos over WebSocket ───────
+static char nanoBuf1[64];
+static uint8_t nanoBuf1Len = 0;
+static char nanoBuf2[64];
+static uint8_t nanoBuf2Len = 0;
+
+static void drainNanoSerial(HardwareSerial& port, char* buf, uint8_t& len) {
+    while (port.available()) {
+        char c = port.read();
+        if (c == '\n') {
+            if (len > 0) {
+                buf[len] = '\0';
+                sendJson(buf);
+                len = 0;
+            }
+        } else if (len < 63) {
+            buf[len++] = c;
+        }
+    }
+}
+
+void handleNanoSerial() {
+    drainNanoSerial(Serial1, nanoBuf1, nanoBuf1Len);
+    drainNanoSerial(Serial2, nanoBuf2, nanoBuf2Len);
 }
 
 // ─── IMU stomp / jump detection ──────────────────────────────────────────────

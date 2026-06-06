@@ -142,7 +142,7 @@ class InputBus {
             this._serialWriter = port.writable.getWriter();
             this.sources.serial = true;
             this._emit('connect', {source: 'serial'});
-            this._emit('status', {text: 'Serial connected (Arduino Nano)', source: 'serial'});
+            this._emit('status', {text: 'Serial connected (Arduino Uno)', source: 'serial'});
             this._readSerial(port);
             return true;
         } catch (e) {
