@@ -183,6 +183,18 @@ html,body{
   width:100%;height:100%;
 }
 .vr-sep{width:3px;background:#0a0a0a;flex-shrink:0;}
+
+/* AR mode (default — no lenses needed) */
+#game.ar-mode #vid-l{transform:none;}          /* no mirror in AR mode */
+#game.ar-mode #eyeR,
+#game.ar-mode .vr-sep{display:none;}            /* hide right eye + divider */
+.vr-toggle{
+  position:absolute;bottom:12px;right:12px;z-index:20;
+  background:rgba(0,0,0,.55);border:1px solid #00ffff44;
+  color:#00ffff;font-family:inherit;font-size:11px;
+  padding:5px 10px;border-radius:6px;cursor:pointer;
+  backdrop-filter:blur(4px);
+}
 .game-hud{
   position:absolute;top:0;left:0;right:0;
   padding:10px 14px;
@@ -384,7 +396,7 @@ html,body{
       <button class="cbtn" id="btnBle"    title="Connect ESP32 via Bluetooth">📶 BLE</button>
       <button class="cbtn" id="btnPhone"  title="Use phone accelerometer as stomp sensor">📱 Phone Stomp</button>
     </div>
-    <button class="nbtn ngame" id="btnGame">🎮 &nbsp;VR GAME MODE</button>
+    <button class="nbtn ngame" id="btnGame">📱 &nbsp;AR GAME MODE</button>
     <button class="nbtn njam"  id="btnJam">🎛️ &nbsp;JAM MODE</button>
     <button class="naud" id="btnAud">📺 AUDIENCE DISPLAY</button>
     <div class="fitness-sm" id="homeFit">🔥 0 kcal &nbsp;|&nbsp; 0 stomps</div>
@@ -392,7 +404,7 @@ html,body{
 </div>
 
 <!-- ════════════════════════ GAME ════════════════════════ -->
-<div id="game" class="screen">
+<div id="game" class="screen ar-mode">
   <div class="vr-container">
     <!-- Left eye -->
     <div class="eye" id="eyeL">
@@ -423,6 +435,7 @@ html,body{
     </div>
   </div>
   <button class="gbk" id="gameBack">◀ BACK</button>
+  <button class="vr-toggle" id="vrToggle" title="Toggle split-screen VR (requires Cardboard lenses)">⊞ VR Split</button>
 </div>
 
 <!-- ════════════════════════ JAM ════════════════════════ -->
@@ -581,6 +594,13 @@ $('btnGame').onclick = () => { location.hash='#game'; };
 $('btnJam').onclick  = () => { location.hash='#jam'; };
 $('btnAud').onclick  = () => { location.hash='#audience'; };
 $('gameBack').onclick = () => { location.hash='#home'; };
+$('vrToggle').onclick = () => {
+  const g=$('game');
+  const ar=g.classList.toggle('ar-mode');
+  $('vrToggle').textContent = ar ? '⊞ VR Split' : '📱 AR';
+  // Sync canvas sizes after layout shift
+  setTimeout(()=>window.dispatchEvent(new Event('resize')),50);
+};
 $('jamBack').onclick  = () => { location.hash='#home'; };
 $('audBack').onclick  = () => { location.hash='#home'; };
 
