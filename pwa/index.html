@@ -615,8 +615,9 @@ function updateConnLabel() {
   const s = bus.statusSummary();
   const el=$('hlabel');
   if (!el) return;
-  if (s === 'none') {
-    el.textContent='DEMO MODE – keyboard active (SPACE=stomp, A-H=pads)';
+  const hasHW = s !== 'none' && s !== 'kb';
+  if (!hasHW) {
+    el.textContent='DEMO MODE – SPACE=stomp · A-H=pads · ←→=steer';
     S.demoMode=true; setDot('');
   } else {
     el.textContent='Connected: '+s;
@@ -644,8 +645,6 @@ $('btnSerial').onclick = () => bus.connectSerial(115200);
 $('btnBle').onclick    = () => bus.connectBluetooth();
 $('btnPhone').onclick  = () => { bus.enablePhoneSensors(); $('btnPhone').classList.add('active'); };
 
-// Keyboard always active (works without hardware for demo)
-bus.enableKeyboard();
 updateConnLabel();
 
 // Auto-try WiFi in background (silently fails if no ESP32)
@@ -1396,7 +1395,7 @@ let kbdSteer=.5;
 window.addEventListener('keydown', e=>{
   // always allow space for game even with HW connected
   if(e.code==='Space'&&!e.repeat){ e.preventDefault(); doStomp(3.0); return; }
-  if(!S.demoMode&&ws&&ws.readyState===1) return;
+  if(!S.demoMode) return;
   if(KEY_PAD[e.code]!==undefined&&!e.repeat){ firePad(KEY_PAD[e.code]); return; }
   if(e.code==='ArrowLeft')  { kbdSteer=clamp(kbdSteer-.08,0,1); setSteer(kbdSteer); }
   if(e.code==='ArrowRight') { kbdSteer=clamp(kbdSteer+.08,0,1); setSteer(kbdSteer); }
