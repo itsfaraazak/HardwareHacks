@@ -300,6 +300,51 @@ html,body{
   100%{opacity:0;transform:translateY(-70px) scale(1.4);}
 }
 
+/* ── iOS fullscreen fallback ── */
+#game.ios-fullscreen{
+  position:fixed;top:0;left:0;
+  width:100vw;height:100vh;
+  z-index:9998;
+}
+
+/* ── Boost HUD indicator ── */
+#boostIndicator{
+  position:absolute;top:10px;left:50%;transform:translateX(-50%);
+  z-index:15;pointer-events:none;
+  font-size:clamp(.75rem,2.5vw,1rem);font-weight:900;
+  letter-spacing:4px;color:#ffaa00;
+  text-shadow:0 0 10px #ffaa00,0 0 30px #ffaa00;
+  display:none;
+  animation:boostPulse .4s ease-in-out infinite alternate;
+}
+@keyframes boostPulse{
+  0%{text-shadow:0 0 10px #ffaa00,0 0 30px #ffaa00;}
+  100%{text-shadow:0 0 20px #ffaa00,0 0 60px #ffaa00,0 0 100px rgba(255,170,0,.5);}
+}
+#boostIndicator.on{display:block;}
+
+/* ── Brake punch vignette ── */
+#brakeFlash{
+  position:fixed;inset:0;z-index:8887;
+  background:rgba(255,255,255,.7);
+  pointer-events:none;opacity:0;
+  transition:opacity .04s ease-in;
+}
+#brakeFlash.on{opacity:1;}
+
+/* ── Touch hit zones (lower 20% of each lane) ── */
+#touchHitRow{
+  position:absolute;bottom:0;left:0;right:0;
+  height:20%;z-index:20;
+  display:flex;pointer-events:auto;
+}
+.touch-lane{
+  flex:1;
+  border-top:2px solid rgba(255,255,255,0.08);
+  background:rgba(0,0,0,0.01);
+}
+
+
 /* ═══════════════════════════════
    JAM SCREEN
 ═══════════════════════════════ */
@@ -476,6 +521,8 @@ html,body{
 
 <!-- ── STOMP FLASH ── -->
 <div id="flash"></div>
+<!-- ── BRAKE PUNCH FLASH ── -->
+<div id="brakeFlash"></div>
 
 <!-- ════════════════════════ HOME ════════════════════════ -->
 <div id="home" class="screen active">
@@ -531,6 +578,13 @@ html,body{
         <div class="hud-bpm rbpm">120 BPM</div>
       </div>
     </div>
+  </div>
+  <div id="boostIndicator">⚡ BOOST</div>
+  <div id="touchHitRow">
+    <div class="touch-lane" data-lane="0"></div>
+    <div class="touch-lane" data-lane="1"></div>
+    <div class="touch-lane" data-lane="2"></div>
+    <div class="touch-lane" data-lane="3"></div>
   </div>
   <button class="gbk" id="gameBack">◀ BACK</button>
   <button class="vr-toggle" id="vrToggle" title="Toggle split-screen VR (requires Cardboard lenses)">⊞ VR Split</button>
@@ -758,7 +812,13 @@ bus.on('status',     ({text}) => { const el=$('hlabel'); if(el) el.textContent=t
 bus.on('steer',    m => setSteer(m.v));
 bus.on('throttle', m => setThrottle(m.v));
 bus.on('brake',    m => setBrake(m.v));
-bus.on('btn',      m => { if(m.s===1) firePad(m.i); });
+bus.on('btn',      m => {
+  if(m.s===1) {
+    firePad(m.i);
+    // Wire buttons to lanes: 0-3 → lanes 0-3, 4-7 → lanes 0-3
+    if(S.screen==='game') gameHit(m.i % LANE_N);
+  }
+});
 bus.on('paddle',   m => { if(m.s===1) firePad(m.i===0?2:5); });
 bus.on('stomp',    m => doStomp(m.m));
 bus.on('jump',     m => doStomp(m.m));
@@ -970,6 +1030,8 @@ function calibrateThrottleRest() {
 function setThrottle(v) {
   S.throttle = v;
   setSlider('sf-thr','sn-thr',v);
+  const bi=$('boostIndicator');
+  if(bi) bi.classList.toggle('on', v>0.3);
   // 8 readings = ~320ms calibration window
   if (_throttleRest === null) {
     _tRestSum += v; _tRestN++;
@@ -1005,11 +1067,30 @@ function calibrateBrakeRest() { _brakeWasDown = null; }
 function setBrake(v) {
   S.brake = v;
   setSlider('sf-brk','sn-brk',v);
-  if (!S.audioReady || !synths[0]) return;
-  const down = v > 0.06;                         // 6% threshold — above noise, below 13% max
-  if (_brakeWasDown === null) { _brakeWasDown = down; return; }  // first read: set state, no trigger
-  if (down && !_brakeWasDown) synths[0].triggerAttackRelease('C1','8n');
+  const down = v > 0.06;
+  if (_brakeWasDown === null) { _brakeWasDown = down; return; }
+  if (down && !_brakeWasDown) {
+    // Kick drum
+    if (S.audioReady && synths[0]) synths[0].triggerAttackRelease('C1','8n');
+    // Screen punch effect in game mode
+    if (S.screen==='game') trigBrakePunch();
+  }
   _brakeWasDown = down;
+}
+
+function trigBrakePunch() {
+  const bf=$('brakeFlash');
+  if(bf){ bf.classList.add('on'); setTimeout(()=>bf.classList.remove('on'), 200); }
+  // Screen shake
+  shakeX=(Math.random()-.5)*6;
+  shakeY=(Math.random()-.5)*6;
+  shakeTtl=100;
+  // STOMP! popup
+  const el=document.createElement('div');
+  el.className='stomp-popup';
+  el.textContent='STOMP!';
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(), 500);
 }
 
 function setSlider(fillId, numId, v) {
@@ -1385,6 +1466,12 @@ let tiltX=0, tiltY=0;
 let noteSpawner=null;
 let cameraStream=null;
 
+// Game FX state
+let particles=[]; // {x,y,vx,vy,r,col,alpha,decay}
+let shakeX=0, shakeY=0, shakeTtl=0;
+let brakeWasDown=false;
+let starField=[]; // fallback background stars
+
 function startGame() {
   if(gameReady) {
     // Restart render loop if needed
@@ -1393,6 +1480,21 @@ function startGame() {
     return;
   }
   gameReady=true;
+
+  // Auto-fullscreen
+  const gameDiv=$('game');
+  if(gameDiv.requestFullscreen){
+    gameDiv.requestFullscreen().catch(()=>{});
+  } else if(gameDiv.webkitRequestFullscreen){
+    gameDiv.webkitRequestFullscreen();
+  }
+  if(screen.orientation&&screen.orientation.lock){
+    screen.orientation.lock('landscape').catch(()=>{});
+  }
+  // iOS fallback
+  if(/iPhone|iPad|iPod/.test(navigator.userAgent)){
+    gameDiv.classList.add('ios-fullscreen');
+  }
 
   // Camera
   navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false})
@@ -1419,6 +1521,34 @@ function startGame() {
   }
   resizeCvs();
   window.addEventListener('resize', resizeCvs);
+
+  // Star field for fallback background
+  starField=[];
+  for(let i=0;i<120;i++){
+    starField.push({
+      x:Math.random(),y:Math.random(),
+      size:.5+Math.random()*2,
+      speed:.0002+Math.random()*.0008,
+      alpha:.2+Math.random()*.8,
+    });
+  }
+
+  // Touch hit zones — tap lower 20% of each lane
+  const thr=$('touchHitRow');
+  if(thr){
+    thr.addEventListener('touchstart',e=>{
+      e.preventDefault();
+      Array.from(e.changedTouches).forEach(t=>{
+        const el=document.elementFromPoint(t.clientX,t.clientY);
+        const lane=el&&el.closest('[data-lane]');
+        if(lane) gameHit(+lane.dataset.lane);
+      });
+    },{passive:false});
+    thr.addEventListener('mousedown',e=>{
+      const lane=e.target.closest('[data-lane]');
+      if(lane) gameHit(+lane.dataset.lane);
+    });
+  }
 
   // Note spawner (works with or without audio)
   startNoteSpawner();
@@ -1449,13 +1579,17 @@ function spawnNotes() {
   lanes.forEach(l=>notes.push({lane:l,y:-50,hit:false,miss:false}));
 }
 
-function gameHit() {
+function gameHit(targetLane) {
   const cv=$('cvs-l'); if(!cv) return;
   const h=cv.height;
+  const w=cv.width;
   const hzTop=h*.80;
+  const hzY=h*.82;
   let hitCount=0;
   notes.forEach(n=>{
     if(n.hit||n.miss) return;
+    // If targetLane specified, only check that lane
+    if(targetLane!==undefined && n.lane!==targetLane) return;
     const nb=n.y+42;
     if(nb>=hzTop&&n.y<=h){
       n.hit=true; hitCount++;
@@ -1463,11 +1597,37 @@ function gameHit() {
       setCombo(S.combo+1);
       wsSend({t:'hit'});
       spawnPopup(S.combo>=10?'PERFECT! 🔥':'PERFECT!','#00ff88',n.lane);
+      // Particles on hit
+      const lw=w/LANE_N;
+      const px=n.lane*lw+lw/2;
+      emitParticles(px, hzY+22, LCOLORS[n.lane], 20);
     }
   });
-  if(!hitCount&&S.combo>1){
+  if(targetLane!==undefined && !hitCount){
+    // Still emit particles even on miss (button pressed) — smaller burst
+    const lw=w/LANE_N;
+    const px=targetLane*lw+lw/2;
+    emitParticles(px, h*.82+22, LCOLORS[targetLane], 8);
+  }
+  if(!hitCount&&S.combo>1&&targetLane===undefined){
     setCombo(1);
     spawnPopup('MISS','#ff2244',Math.floor(Math.random()*LANE_N));
+  }
+}
+
+function emitParticles(px, py, col, count) {
+  for(let i=0;i<count;i++){
+    const angle=Math.random()*Math.PI*2;
+    const speed=1+Math.random()*4;
+    particles.push({
+      x:px, y:py,
+      vx:Math.cos(angle)*speed,
+      vy:Math.sin(angle)*speed - 1,
+      r:2+Math.random()*4,
+      col:col,
+      alpha:1,
+      decay:0.02+Math.random()*0.03,
+    });
   }
 }
 
@@ -1493,7 +1653,214 @@ function gameRender() {
   let lastT=performance.now();
   let beatPhase=0, lastBeatT=performance.now();
 
-  function speedPx(canvas){ return canvas.height/(2*(60000/S.bpm)); } // px/ms
+  // speedPx: throttle boosts note speed
+  function speedPx(canvas){ return canvas.height/(2*(60000/S.bpm)) * (1 + S.throttle*1.5); }
+
+  function drawEye(cv, ei, beatPhase, now) {
+    const ctx=cv.getContext('2d');
+    const w=cv.width, h=cv.height;
+    if(!w||!h) return;
+
+    // Screen shake offset
+    const sx=(ei===0)? shakeX:0;
+    const sy=(ei===0)? shakeY:0;
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    // Clear — if no camera, draw star field fallback
+    ctx.clearRect(-sx-4, -sy-4, w+8, h+8);
+    if(!cameraStream) {
+      ctx.fillStyle='#000';
+      ctx.fillRect(-sx-4,-sy-4,w+8,h+8);
+      // Stars
+      starField.forEach(s=>{
+        s.y = (s.y + s.speed) % 1;
+        const sx2=s.x*w, sy2=s.y*h;
+        ctx.globalAlpha=s.alpha*0.7;
+        ctx.fillStyle='#fff';
+        ctx.beginPath(); ctx.arc(sx2,sy2,s.size,0,Math.PI*2); ctx.fill();
+      });
+      ctx.globalAlpha=1;
+    }
+
+    // Beat pulse vignette (stronger)
+    const bAlpha=0.10*Math.max(0,1-beatPhase*2);
+    if(bAlpha>0){
+      const vg=ctx.createRadialGradient(w/2,h/2,0,w/2,h/2,h*.6);
+      vg.addColorStop(0,'rgba(0,255,255,'+bAlpha.toFixed(3)+')');
+      vg.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=vg; ctx.fillRect(0,0,w,h);
+    }
+
+    // Combined tilt: gyro + steer
+    const combinedTilt=(tiltX*0.7)+((S.steer-0.5)*2*0.3);
+    const parallax=combinedTilt*18*(ei===0?1:-1);
+
+    // Perspective vanishing point — draw trapezoid lanes
+    const VP={x:w/2+parallax*0.5, y:h*0.1}; // vanishing point
+    const hzY=h*0.82;
+    const lw=w/LANE_N;
+
+    // Lane trapezoids (perspective narrowing to VP)
+    const perspScale=0.25; // how narrow lanes get at the top
+    for(let i=0;i<LANE_N;i++){
+      const bL=i*lw+parallax;
+      const bR=(i+1)*lw+parallax;
+      const tL=VP.x+(bL-VP.x)*perspScale;
+      const tR=VP.x+(bR-VP.x)*perspScale;
+      // Lane fill gradient
+      const col=LCOLORS[i];
+      const grad=ctx.createLinearGradient(0,VP.y,0,hzY);
+      grad.addColorStop(0,'rgba(0,0,0,0)');
+      grad.addColorStop(1,col+'11');
+      ctx.fillStyle=grad;
+      ctx.beginPath();
+      ctx.moveTo(tL,VP.y); ctx.lineTo(tR,VP.y);
+      ctx.lineTo(bR,hzY); ctx.lineTo(bL,hzY);
+      ctx.closePath(); ctx.fill();
+    }
+
+    // Lane separator lines (perspective)
+    for(let i=0;i<=LANE_N;i++){
+      const bx=i*lw+parallax;
+      const tx=VP.x+(bx-VP.x)*perspScale;
+      ctx.strokeStyle='rgba(255,255,255,0.12)';
+      ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(tx,VP.y); ctx.lineTo(bx,hzY); ctx.stroke();
+      // Continue below hz to bottom
+      if(i>0&&i<LANE_N){
+        ctx.strokeStyle='rgba(255,255,255,0.06)';
+        ctx.beginPath(); ctx.moveTo(bx,hzY); ctx.lineTo(bx,h); ctx.stroke();
+      }
+    }
+
+    // Horizon line tilts with steer
+    const horizY=VP.y+12;
+    const horizTilt=(S.steer-0.5)*h*0.06;
+    ctx.strokeStyle='rgba(255,255,255,0.10)';
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.moveTo(0, horizY+horizTilt);
+    ctx.lineTo(w, horizY-horizTilt);
+    ctx.stroke();
+
+    // Hit zone glow strip
+    const hzGrad=ctx.createLinearGradient(0,hzY,0,h);
+    hzGrad.addColorStop(0,'rgba(255,255,255,0.08)');
+    hzGrad.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=hzGrad; ctx.fillRect(0,hzY,w,h-hzY);
+
+    // Hit zone circles — pulse with BPM (more dramatic)
+    const ringPulse=0.5+0.5*Math.sin(beatPhase*Math.PI*2);
+    for(let i=0;i<LANE_N;i++){
+      const col=LCOLORS[i];
+      const cx2=i*lw+lw/2+parallax;
+      const ringR=lw*(.28+ringPulse*.06);
+      // Outer glow ring
+      ctx.strokeStyle=col+(ringPulse>0.7?'cc':'55');
+      ctx.lineWidth=2+ringPulse*3;
+      ctx.shadowColor=col; ctx.shadowBlur=10+ringPulse*20;
+      ctx.beginPath(); ctx.arc(cx2,hzY+22,ringR,0,Math.PI*2); ctx.stroke();
+      // Inner ring
+      ctx.strokeStyle=col+'33'; ctx.lineWidth=1; ctx.shadowBlur=0;
+      ctx.beginPath(); ctx.arc(cx2,hzY+22,ringR*0.6,0,Math.PI*2); ctx.stroke();
+      ctx.shadowBlur=0;
+    }
+
+    // Notes — perspective-scaled, 3D gradient
+    notes.forEach(n=>{
+      const col=LCOLORS[n.lane];
+      // Perspective: note gets wider as it approaches hitzone
+      const progY=clamp((n.y-VP.y)/(hzY-VP.y),0,1);
+      const noteW=(lw*.70)*(perspScale+(1-perspScale)*progY);
+      const noteH=38*(0.5+0.5*progY);
+      const bx=n.lane*lw+parallax+(lw-lw*.70)/2;
+      const tx=VP.x+(bx-VP.x)*perspScale;
+      const nx=tx+(bx-tx)*progY;
+      const ny=n.y;
+      const cr=Math.max(3,7*progY);
+
+      // 3D gradient: bright top, darker bottom
+      const noteGrad=ctx.createLinearGradient(nx,ny,nx,ny+noteH);
+      noteGrad.addColorStop(0,'#ffffff');
+      noteGrad.addColorStop(0.25,col);
+      noteGrad.addColorStop(1,col+'66');
+
+      ctx.shadowColor=col; ctx.shadowBlur=12+progY*12;
+      ctx.fillStyle=noteGrad;
+      ctx.beginPath();
+      ctx.moveTo(nx+cr,ny); ctx.lineTo(nx+noteW-cr,ny);
+      ctx.quadraticCurveTo(nx+noteW,ny,nx+noteW,ny+cr);
+      ctx.lineTo(nx+noteW,ny+noteH-cr);
+      ctx.quadraticCurveTo(nx+noteW,ny+noteH,nx+noteW-cr,ny+noteH);
+      ctx.lineTo(nx+cr,ny+noteH);
+      ctx.quadraticCurveTo(nx,ny+noteH,nx,ny+noteH-cr);
+      ctx.lineTo(nx,ny+cr);
+      ctx.quadraticCurveTo(nx,ny,nx+cr,ny);
+      ctx.closePath(); ctx.fill();
+      ctx.shadowBlur=0;
+
+      // Top shine
+      ctx.fillStyle='rgba(255,255,255,0.35)';
+      ctx.beginPath();
+      ctx.moveTo(nx+cr,ny+2); ctx.lineTo(nx+noteW-cr,ny+2);
+      ctx.quadraticCurveTo(nx+noteW-2,ny+2,nx+noteW-2,ny+cr);
+      ctx.lineTo(nx+noteW-2,ny+Math.min(noteH*.4,12));
+      ctx.lineTo(nx+2,ny+Math.min(noteH*.4,12)); ctx.lineTo(nx+2,ny+cr);
+      ctx.quadraticCurveTo(nx+2,ny+2,nx+cr,ny+2);
+      ctx.closePath(); ctx.fill();
+    });
+
+    // Particles (only on left eye)
+    if(ei===0){
+      particles.forEach(p=>{
+        ctx.globalAlpha=p.alpha;
+        ctx.fillStyle=p.col;
+        ctx.shadowColor=p.col; ctx.shadowBlur=8;
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+        ctx.shadowBlur=0;
+      });
+      ctx.globalAlpha=1;
+    }
+
+    // FFT spectrum overlay (bottom 15%)
+    if(analyser&&S.audioReady){
+      const specH=h*0.15;
+      const specY=h-specH;
+      const data=analyser.getValue();
+      const bars=32;
+      const bw2=w/bars;
+      ctx.globalAlpha=0.4;
+      for(let i=0;i<bars;i++){
+        const v=clamp((data[i]+160)/160,0,1);
+        const bh2=Math.max(2, v*specH);
+        const lcol=LCOLORS[i%LANE_N];
+        ctx.fillStyle=lcol;
+        ctx.shadowColor=lcol; ctx.shadowBlur=4;
+        ctx.fillRect(i*bw2, specY+(specH-bh2), bw2-1, bh2);
+      }
+      ctx.shadowBlur=0; ctx.globalAlpha=1;
+    }
+
+    // Combo multiplier behind everything (semi-transparent large number)
+    if(S.combo>1){
+      const comboAlpha=Math.min(0.12, S.combo*0.015);
+      ctx.globalAlpha=comboAlpha;
+      ctx.fillStyle='#ffffff';
+      ctx.font=`900 ${Math.min(w*.35,180)}px Orbitron,monospace`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(S.combo+'x', w/2, h/2);
+      ctx.globalAlpha=1;
+    }
+
+    // Dark vignette edges
+    const vig=ctx.createRadialGradient(w/2,h/2,h*.28,w/2,h/2,h*.85);
+    vig.addColorStop(0,'rgba(0,0,0,0)');
+    vig.addColorStop(1,'rgba(0,0,0,0.65)');
+    ctx.fillStyle=vig; ctx.fillRect(0,0,w,h);
+
+    ctx.restore();
+  }
 
   function frame(now) {
     gameRaf=requestAnimationFrame(frame);
@@ -1506,7 +1873,13 @@ function gameRender() {
     beatPhase=(now-lastBeatT)/bMs;
     if(beatPhase>=1){ lastBeatT=now; beatPhase=0; }
 
-    // Move notes
+    // Screen shake decay
+    if(shakeTtl>0){
+      shakeTtl=Math.max(0,shakeTtl-dt);
+      if(shakeTtl<=0){ shakeX=0; shakeY=0; }
+    }
+
+    // Move notes (throttle-boosted speed)
     const sp=speedPx(cvL)*dt;
     notes.forEach(n=>{ if(!n.hit) n.y+=sp; });
     // Cull
@@ -1522,94 +1895,19 @@ function gameRender() {
       return n.y<=h+70;
     });
 
-    // Render each eye
-    [cvL,cvR].forEach((cv,ei)=>{
-      const ctx=cv.getContext('2d');
-      const w=cv.width, h=cv.height;
-      if(!w||!h) return;
-
-      // Clear (transparent over video)
-      ctx.clearRect(0,0,w,h);
-
-      // Beat pulse vignette
-      const bAlpha=0.06*Math.max(0,1-beatPhase*2);
-      if(bAlpha>0){
-        const vg=ctx.createRadialGradient(w/2,h/2,0,w/2,h/2,h*.6);
-        vg.addColorStop(0,'rgba(0,255,255,'+bAlpha.toFixed(3)+')');
-        vg.addColorStop(1,'rgba(0,0,0,0)');
-        ctx.fillStyle=vg; ctx.fillRect(0,0,w,h);
-      }
-
-      const parallax=tiltX*14*(ei===0?1:-1);
-      const lw=w/LANE_N;
-      const hzY=h*.82;
-
-      // Hit zone glow
-      const hzGrad=ctx.createLinearGradient(0,hzY,0,h);
-      hzGrad.addColorStop(0,'rgba(255,255,255,0.06)');
-      hzGrad.addColorStop(1,'rgba(0,0,0,0)');
-      ctx.fillStyle=hzGrad; ctx.fillRect(0,hzY,w,h-hzY);
-
-      // Lane separator lines
-      for(let i=1;i<LANE_N;i++){
-        const x=i*lw+parallax;
-        ctx.strokeStyle='rgba(255,255,255,0.08)';
-        ctx.lineWidth=1;
-        ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
-      }
-
-      // Hit zone circles per lane
-      for(let i=0;i<LANE_N;i++){
-        const col=LCOLORS[i];
-        const cx2=i*lw+lw/2+parallax;
-        ctx.strokeStyle=col+'55'; ctx.lineWidth=2;
-        ctx.shadowColor=col; ctx.shadowBlur=10;
-        ctx.beginPath(); ctx.arc(cx2,hzY+22,lw*.28,0,Math.PI*2); ctx.stroke();
-        ctx.shadowBlur=0;
-      }
-
-      // Notes
-      notes.forEach(n=>{
-        const col=LCOLORS[n.lane];
-        const nw=lw*.70, nh=38;
-        const nx=n.lane*lw+parallax+(lw-nw)/2;
-        const ny=n.y;
-        const cr=7;
-
-        // Glow
-        ctx.shadowColor=col; ctx.shadowBlur=20;
-
-        // Body
-        ctx.fillStyle=col+'dd';
-        ctx.beginPath();
-        ctx.moveTo(nx+cr,ny); ctx.lineTo(nx+nw-cr,ny);
-        ctx.quadraticCurveTo(nx+nw,ny,nx+nw,ny+cr);
-        ctx.lineTo(nx+nw,ny+nh-cr);
-        ctx.quadraticCurveTo(nx+nw,ny+nh,nx+nw-cr,ny+nh);
-        ctx.lineTo(nx+cr,ny+nh);
-        ctx.quadraticCurveTo(nx,ny+nh,nx,ny+nh-cr);
-        ctx.lineTo(nx,ny+cr);
-        ctx.quadraticCurveTo(nx,ny,nx+cr,ny);
-        ctx.closePath(); ctx.fill();
-        ctx.shadowBlur=0;
-
-        // Shine
-        ctx.fillStyle='rgba(255,255,255,0.28)';
-        ctx.beginPath();
-        ctx.moveTo(nx+cr,ny+2); ctx.lineTo(nx+nw-cr,ny+2);
-        ctx.quadraticCurveTo(nx+nw-2,ny+2,nx+nw-2,ny+cr);
-        ctx.lineTo(nx+nw-2,ny+10);
-        ctx.lineTo(nx+2,ny+10); ctx.lineTo(nx+2,ny+cr);
-        ctx.quadraticCurveTo(nx+2,ny+2,nx+cr,ny+2);
-        ctx.closePath(); ctx.fill();
-      });
-
-      // Dark vignette edges
-      const vig=ctx.createRadialGradient(w/2,h/2,h*.28,w/2,h/2,h*.85);
-      vig.addColorStop(0,'rgba(0,0,0,0)');
-      vig.addColorStop(1,'rgba(0,0,0,0.65)');
-      ctx.fillStyle=vig; ctx.fillRect(0,0,w,h);
+    // Update particles
+    particles.forEach(p=>{
+      p.x+=p.vx; p.y+=p.vy;
+      p.vy+=0.15; // gravity
+      p.alpha=Math.max(0,p.alpha-p.decay);
     });
+    particles=particles.filter(p=>p.alpha>0);
+
+    // Render each eye
+    const cvs=[cvL,cvR];
+    for(let ei=0;ei<cvs.length;ei++){
+      drawEye(cvs[ei], ei, beatPhase, now);
+    }
   }
 
   requestAnimationFrame(frame);
@@ -1736,8 +2034,13 @@ let kbdSteer=.5;
 window.addEventListener('keydown', e=>{
   // always allow space for game even with HW connected
   if(e.code==='Space'&&!e.repeat){ e.preventDefault(); doStomp(3.0); return; }
+  if(KEY_PAD[e.code]!==undefined&&!e.repeat){
+    if(S.demoMode) firePad(KEY_PAD[e.code]);
+    // In game mode: A-H always hits the matching lane (0-3 wrap)
+    if(S.screen==='game') gameHit(KEY_PAD[e.code] % LANE_N);
+    return;
+  }
   if(!S.demoMode) return;
-  if(KEY_PAD[e.code]!==undefined&&!e.repeat){ firePad(KEY_PAD[e.code]); return; }
   if(e.code==='ArrowLeft')  { kbdSteer=clamp(kbdSteer-.08,0,1); setSteer(kbdSteer); }
   if(e.code==='ArrowRight') { kbdSteer=clamp(kbdSteer+.08,0,1); setSteer(kbdSteer); }
   if(e.code==='ArrowUp')    setThrottle(clamp(S.throttle+.1,0,1));
