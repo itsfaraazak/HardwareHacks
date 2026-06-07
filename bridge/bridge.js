@@ -43,6 +43,8 @@ const WS_URL = config.workerUrl.replace(/\?.*$/, '') + '?role=bridge';
 
 // ── Serial auto-detect ────────────────────────────────────────────────────────
 async function findSerialPort() {
+  if (process.env.SERIAL_PATH) return process.env.SERIAL_PATH;
+  if (config.serialPath) return config.serialPath;
   const ports = await SerialPort.list();
   const platform = process.platform;
 
