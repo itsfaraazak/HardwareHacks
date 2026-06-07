@@ -953,47 +953,31 @@ function setSteer(v) {
   }
   _lastSteerV = v;
 }
-// ── Throttle → pentatonic melody ─────────────────────────────────────────────
+// ── Throttle → pentatonic melody (simple + reliable, retriggers while held) ──
 const PENTA = ['C2','E2','G2','A2','C3','E3','G3','A3','C4','E4','G4','A4','C5','E5','G5','A5'];
-const T_DEAD = 0.05;  // dead zone from rest
+const T_GATE = 0.10;   // pedal must be past this to make sound
 let _lastThrottleNote = null;
-let _throttleOn       = false;
-let _throttleRest     = null;
-let _throttleRange    = 0.5;   // filled after calibration = max reachable delta
-let _tRestSum = 0, _tRestN = 0;
+let _lastThrottleFire = 0;
 
-function calibrateThrottleRest() {
-  _throttleRest = null; _tRestSum = 0; _tRestN = 0;
-  _throttleOn = false; _lastThrottleNote = null; _throttleRange = 0.5;
-}
+function calibrateThrottleRest() { _lastThrottleNote = null; _lastThrottleFire = 0; }
 
 function setThrottle(v) {
   S.throttle = v;
   setSlider('sf-thr','sn-thr',v);
-  // 8 readings = ~320ms calibration window
-  if (_throttleRest === null) {
-    _tRestSum += v; _tRestN++;
-    if (_tRestN >= 8) {
-      _throttleRest = _tRestSum / _tRestN;
-      // Max delta from rest to either end of 0-1 range
-      _throttleRange = Math.max(_throttleRest, 1 - _throttleRest);
-    }
-    return;
-  }
   if (!S.audioReady || !synths['pedal']) return;
 
-  const delta = Math.abs(v - _throttleRest);
-  if (delta < T_DEAD) {
-    // Back in dead zone — just forget last note; 150ms self-expiry kills the sound
-    _lastThrottleNote = null; _throttleOn = false;
-    return;
-  }
-  const norm = Math.min((delta - T_DEAD) / (_throttleRange - T_DEAD), 1);
+  if (v < T_GATE) { _lastThrottleNote = null; return; }   // released → silent
+
+  // Map pedal travel above the gate → pentatonic scale
+  const norm = Math.min((v - T_GATE) / (1 - T_GATE), 1);
   const note = PENTA[Math.min(Math.floor(norm * PENTA.length), PENTA.length - 1)];
-  if (note !== _lastThrottleNote) {
-    // Self-expiring 150ms note — no explicit release needed, no stuck hum
-    synths['pedal'].triggerAttackRelease(note, 0.15);
-    _lastThrottleNote = note; _throttleOn = true;
+
+  // Retrigger on note change OR every 170ms while held → continuous melody
+  const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  if (note !== _lastThrottleNote || (now - _lastThrottleFire) > 170) {
+    synths['pedal'].triggerAttackRelease(note, 0.22);
+    _lastThrottleNote = note;
+    _lastThrottleFire = now;
   }
 }
 
