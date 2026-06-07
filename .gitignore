@@ -7,3 +7,5 @@ bridge/config.json
 node_modules/
 bridge/node_modules/
 worker/node_modules/
+pwa/config.js
+.env

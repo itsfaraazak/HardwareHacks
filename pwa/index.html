@@ -650,6 +650,8 @@ html,body{
 
 <!-- Tone.js CDN -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+<!-- config.js is gitignored — copy config.example.js → config.js with your Worker URL -->
+<script src="config.js" onerror="window.__RR={}"></script>
 <script>
 /* ════════════════════════════════════════════════════════════
    RHYTHM RIDE — SINGLE FILE PWA
@@ -657,10 +659,10 @@ html,body{
 ════════════════════════════════════════════════════════════ */
 'use strict';
 
-// ── Cloud relay URL ───────────────────────────────────────
-// After deploying the Cloudflare Worker, replace YOUR_SUBDOMAIN with your
-// worker subdomain (e.g. abc123). Leave as-is to disable auto-connect.
-const CLOUD_RELAY_URL = 'wss://rhythmride-relay.YOUR_SUBDOMAIN.workers.dev/ws?role=phone';
+// ── Cloud relay URL — loaded from pwa/config.js (gitignored) ─────────────────
+// Copy pwa/config.example.js → pwa/config.js and fill in your Worker URL.
+// NEVER hardcode the real URL here — this file is public.
+const CLOUD_RELAY_URL = (window.__RR && window.__RR.workerUrl) || '';
 
 // ── Global state ─────────────────────────────────────────
 const S = {
@@ -931,38 +933,25 @@ function onMsg(m) {
 // ══════════════════════════════════════════════════════════
 //  INPUT HANDLERS
 // ══════════════════════════════════════════════════════════
-// Steer: calibrate rest, amplify stiff spring, run formant continuously
-let _steerRest = null, _sRestSum = 0, _sRestN = 0;
-const STEER_DEAD  = 0.03;   // dead zone from rest (stiff spring)
-const STEER_RANGE = 0.20;   // how much travel = full effect (amplify small range)
-function calibrateSteerRest() { _steerRest=null; _sRestSum=0; _sRestN=0; }
+// Steer: raw value → filter/vowel + one-shot formant burst on movement (no hum)
+let _lastSteerV = 0.5;
+function calibrateSteerRest() { _lastSteerV = 0.5; }
 
 function setSteer(v) {
   S.steer = v;
   setSlider('sf-str','sn-str',v);
   drawKnob(v);
+  setVowel(v);
+  setFilter(v);
 
-  // Calibrate rest position from first 8 readings
-  if (_steerRest === null) {
-    _sRestSum += v; _sRestN++;
-    if (_sRestN >= 8) _steerRest = _sRestSum / _sRestN;
-    return;
+  if (fGain && S.audioReady && Math.abs(v - _lastSteerV) > 0.03) {
+    const t = Tone.getContext().currentTime;
+    fOsc.frequency.setTargetAtTime(300 + v * 800, t, 0.02);  // 300–1100Hz, audible range
+    fGain.gain.cancelScheduledValues(t);
+    fGain.gain.setValueAtTime(0.9, t);                        // louder
+    fGain.gain.setTargetAtTime(0, t + 0.2, 0.25);            // longer fade ~800ms
   }
-
-  // Amplify: map small travel to full 0-1 range
-  const raw  = v - _steerRest;                            // signed delta from rest
-  const amp  = Math.max(-1, Math.min(1, raw / STEER_RANGE)); // -1..+1 amplified
-  const mapped = (amp + 1) / 2;                           // 0..1 for filter/vowel
-
-  setVowel(mapped);
-  setFilter(mapped);
-
-  // Formant gain: 0 at rest, rises with distance from center — continuous theremin
-  if (fGain && S.audioReady) {
-    const delta = Math.abs(raw);
-    const gain  = delta < STEER_DEAD ? 0 : Math.min((delta - STEER_DEAD) / (STEER_RANGE - STEER_DEAD), 1) * 0.5;
-    fGain.gain.setTargetAtTime(gain, Tone.getContext().currentTime, 0.08);
-  }
+  _lastSteerV = v;
 }
 // ── Throttle → pentatonic melody ─────────────────────────────────────────────
 const PENTA = ['C2','E2','G2','A2','C3','E3','G3','A3','C4','E4','G4','A4','C5','E5','G5','A5'];
