@@ -748,7 +748,7 @@ function updateConnLabel() {
   }
 }
 
-bus.on('connect',    () => { setDot('ok');   updateConnLabel(); });
+bus.on('connect',    () => { setDot('ok');   updateConnLabel(); calibrateThrottleRest(); calibrateBrakeRest(); calibrateSteerRest(); });
 bus.on('disconnect', () => { updateConnLabel(); });
 bus.on('status',     ({text}) => { const el=$('hlabel'); if(el) el.textContent=text; });
 
@@ -931,15 +931,97 @@ function onMsg(m) {
 // ══════════════════════════════════════════════════════════
 //  INPUT HANDLERS
 // ══════════════════════════════════════════════════════════
+// Steer: calibrate rest, amplify stiff spring, run formant continuously
+let _steerRest = null, _sRestSum = 0, _sRestN = 0;
+const STEER_DEAD  = 0.03;   // dead zone from rest (stiff spring)
+const STEER_RANGE = 0.20;   // how much travel = full effect (amplify small range)
+function calibrateSteerRest() { _steerRest=null; _sRestSum=0; _sRestN=0; }
+
 function setSteer(v) {
-  S.steer=v;
+  S.steer = v;
   setSlider('sf-str','sn-str',v);
   drawKnob(v);
-  setVowel(v);
-  setFilter(v);
+
+  // Calibrate rest position from first 8 readings
+  if (_steerRest === null) {
+    _sRestSum += v; _sRestN++;
+    if (_sRestN >= 8) _steerRest = _sRestSum / _sRestN;
+    return;
+  }
+
+  // Amplify: map small travel to full 0-1 range
+  const raw  = v - _steerRest;                            // signed delta from rest
+  const amp  = Math.max(-1, Math.min(1, raw / STEER_RANGE)); // -1..+1 amplified
+  const mapped = (amp + 1) / 2;                           // 0..1 for filter/vowel
+
+  setVowel(mapped);
+  setFilter(mapped);
+
+  // Formant gain: 0 at rest, rises with distance from center — continuous theremin
+  if (fGain && S.audioReady) {
+    const delta = Math.abs(raw);
+    const gain  = delta < STEER_DEAD ? 0 : Math.min((delta - STEER_DEAD) / (STEER_RANGE - STEER_DEAD), 1) * 0.5;
+    fGain.gain.setTargetAtTime(gain, Tone.getContext().currentTime, 0.08);
+  }
 }
-function setThrottle(v){ S.throttle=v; setSlider('sf-thr','sn-thr',v); }
-function setBrake(v)    { S.brake=v;    setSlider('sf-brk','sn-brk',v); }
+// ── Throttle → pentatonic melody ─────────────────────────────────────────────
+const PENTA = ['C2','E2','G2','A2','C3','E3','G3','A3','C4','E4','G4','A4','C5','E5','G5','A5'];
+const T_DEAD = 0.05;  // dead zone from rest
+let _lastThrottleNote = null;
+let _throttleOn       = false;
+let _throttleRest     = null;
+let _throttleRange    = 0.5;   // filled after calibration = max reachable delta
+let _tRestSum = 0, _tRestN = 0;
+
+function calibrateThrottleRest() {
+  _throttleRest = null; _tRestSum = 0; _tRestN = 0;
+  _throttleOn = false; _lastThrottleNote = null; _throttleRange = 0.5;
+}
+
+function setThrottle(v) {
+  S.throttle = v;
+  setSlider('sf-thr','sn-thr',v);
+  // 8 readings = ~320ms calibration window
+  if (_throttleRest === null) {
+    _tRestSum += v; _tRestN++;
+    if (_tRestN >= 8) {
+      _throttleRest = _tRestSum / _tRestN;
+      // Max delta from rest to either end of 0-1 range
+      _throttleRange = Math.max(_throttleRest, 1 - _throttleRest);
+    }
+    return;
+  }
+  if (!S.audioReady || !synths['pedal']) return;
+
+  const delta = Math.abs(v - _throttleRest);
+  if (delta < T_DEAD) {
+    // Back in dead zone — just forget last note; 150ms self-expiry kills the sound
+    _lastThrottleNote = null; _throttleOn = false;
+    return;
+  }
+  const norm = Math.min((delta - T_DEAD) / (_throttleRange - T_DEAD), 1);
+  const note = PENTA[Math.min(Math.floor(norm * PENTA.length), PENTA.length - 1)];
+  if (note !== _lastThrottleNote) {
+    // Self-expiring 150ms note — no explicit release needed, no stuck hum
+    synths['pedal'].triggerAttackRelease(note, 0.15);
+    _lastThrottleNote = note; _throttleOn = true;
+  }
+}
+
+// ── Brake → kick drum ────────────────────────────────────────────────────────
+// null = first reading after audio ready (captures state without triggering)
+let _brakeWasDown = null;
+function calibrateBrakeRest() { _brakeWasDown = null; }
+
+function setBrake(v) {
+  S.brake = v;
+  setSlider('sf-brk','sn-brk',v);
+  if (!S.audioReady || !synths[0]) return;
+  const down = v > 0.06;                         // 6% threshold — above noise, below 13% max
+  if (_brakeWasDown === null) { _brakeWasDown = down; return; }  // first read: set state, no trigger
+  if (down && !_brakeWasDown) synths[0].triggerAttackRelease('C1','8n');
+  _brakeWasDown = down;
+}
 
 function setSlider(fillId, numId, v) {
   const f=$(fillId), n=$(numId);
@@ -1077,6 +1159,12 @@ function buildSynths() {
   synths[6]=new Tone.PolySynth(Tone.Synth,{oscillator:{type:'sine'},envelope:{attack:.05,decay:.3,sustain:.5,release:1}}).connect(flt);
   // 7 VOX – formant (WebAudio native)
   synths[7]=null;
+  // Dedicated pedal synth — fast release, no hum, created eagerly
+  synths['pedal'] = new Tone.Synth({
+    oscillator: { type: 'sine' },
+    envelope:   { attack: 0.008, decay: 0.05, sustain: 1.0, release: 0.05 }
+  }).connect(flt);
+  synths['pedal'].volume.value = -6;
 
   // Formant chain
   const ac=Tone.getContext().rawContext;

@@ -25,16 +25,18 @@
 // ── Pins ──────────────────────────────────────────────────
 #define PIN_THROTTLE A0
 #define PIN_BRAKE    A1
+#define PIN_STEER    A2    // steering wheel pot wiper → teal wire
 #define PIN_BTN1     2     // stomp
 #define PIN_BTN2     4     // snare
 
 // ── How smooth / how often ────────────────────────────────
-const float EMA   = 0.15f;   // knob smoothing (higher = snappier)
-const float DELTA = 0.02f;   // only send if knob moved this much
+const float EMA           = 0.15f;  // smoothing (higher = snappier)
+const float DELTA_THROTTLE= 0.015f; // throttle: send if moved this much
+const float DELTA_BRAKE   = 0.004f; // brake: very sensitive (stiff spring)
 
 // ── Memory of last values ─────────────────────────────────
-float throttleSmooth = 0,  brakeSmooth = 0;
-float lastThrottle   = -1, lastBrake   = -1;
+float throttleSmooth = 0,  brakeSmooth = 0,  steerSmooth = 0;
+float lastThrottle   = -1, lastBrake   = -1, lastSteer   = -1;
 int   lastBtn1 = HIGH,     lastBtn2    = HIGH;
 unsigned long lastPedalMs = 0;
 
@@ -67,11 +69,12 @@ void loop() {
 
         float t = EMA * (analogRead(PIN_THROTTLE) / 1023.0f) + (1.0f - EMA) * throttleSmooth;
         float b = EMA * (analogRead(PIN_BRAKE)    / 1023.0f) + (1.0f - EMA) * brakeSmooth;
-        throttleSmooth = t;
-        brakeSmooth    = b;
+        float s = EMA * (analogRead(PIN_STEER)    / 1023.0f) + (1.0f - EMA) * steerSmooth;
+        throttleSmooth = t; brakeSmooth = b; steerSmooth = s;
 
-        if (fabsf(t - lastThrottle) >= DELTA) { sendValue("throttle", t); lastThrottle = t; }
-        if (fabsf(b - lastBrake)    >= DELTA) { sendValue("brake",    b); lastBrake    = b; }
+        if (fabsf(t - lastThrottle) >= DELTA_THROTTLE) { sendValue("throttle", t); lastThrottle = t; }
+        if (fabsf(b - lastBrake)    >= DELTA_BRAKE)    { sendValue("brake",    b); lastBrake    = b; }
+        if (fabsf(s - lastSteer)    >= DELTA_BRAKE)    { sendValue("steer",    s); lastSteer    = s; }
     }
 
     // ── Button 1 → stomp (kick drum) ──────────────────────
