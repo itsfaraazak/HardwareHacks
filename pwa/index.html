@@ -5,14 +5,92 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="RhythmRide">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#000000">
 <link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' fill='%23000'/><text x='256' y='320' font-size='300' text-anchor='middle' fill='%2300ffff'>%F0%9F%8E%B5</text></svg>">
 <script src="js/input-bus.js"></script>
 <title>RHYTHM RIDE</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
+/* ═══════════════════════════════
+   MOBILE A2HS NUDGE
+═══════════════════════════════ */
+#a2hs{
+  position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
+  z-index:9000;
+  background:rgba(0,0,0,.88);border:1px solid #00ffff44;
+  border-radius:12px;padding:10px 18px;
+  display:none;align-items:center;gap:10px;
+  font-size:.65rem;color:#aaa;letter-spacing:2px;
+  backdrop-filter:blur(8px);max-width:340px;width:92%;
+  box-shadow:0 0 24px rgba(0,255,255,.15);
+}
+#a2hs.show{display:flex;}
+#a2hs span{flex:1;line-height:1.5;}
+#a2hs button{
+  background:none;border:1px solid #00ffff55;color:#00ffff;
+  border-radius:6px;padding:5px 10px;font-family:inherit;
+  font-size:.6rem;cursor:pointer;white-space:nowrap;letter-spacing:1px;
+}
+#a2hs .a2hs-close{
+  background:none;border:none;color:#444;
+  font-size:.9rem;cursor:pointer;padding:0 4px;line-height:1;
+}
+
+/* ═══════════════════════════════
+   MOBILE LANDING PANEL
+   (phone-only: sits above home UI)
+═══════════════════════════════ */
+#mobileLanding{
+  position:fixed;inset:0;z-index:8000;
+  background:#000;
+  display:none;
+  flex-direction:column;align-items:center;justify-content:center;
+  gap:24px;padding:32px 20px;
+}
+#mobileLanding.show{display:flex;}
+.ml-title{
+  font-size:clamp(2.8rem,18vw,5rem);
+  font-weight:900;color:var(--c);
+  text-shadow:0 0 10px var(--c),0 0 40px var(--c),0 0 80px rgba(0,255,255,.4);
+  letter-spacing:6px;text-align:center;line-height:1.05;
+  animation:titleGlow 3s ease-in-out infinite;
+}
+.ml-sub{
+  font-size:clamp(.7rem,3.5vw,.9rem);
+  color:#555;letter-spacing:4px;text-align:center;
+}
+.ml-status{
+  font-size:.65rem;color:#444;letter-spacing:2px;
+  display:flex;align-items:center;gap:8px;
+}
+.ml-btn{
+  width:100%;max-width:340px;
+  padding:22px 20px;
+  background:transparent;border:2px solid var(--c);border-radius:8px;
+  font-family:'Orbitron',monospace;font-size:clamp(1rem,4.5vw,1.25rem);
+  font-weight:900;letter-spacing:3px;color:var(--c);cursor:pointer;
+  box-shadow:0 0 24px rgba(0,255,255,.3),inset 0 0 20px rgba(0,255,255,.06);
+  transition:all .15s;position:relative;overflow:hidden;
+  animation:pulse 2s ease-in-out infinite;
+}
+@keyframes pulse{
+  0%,100%{box-shadow:0 0 24px rgba(0,255,255,.3),inset 0 0 20px rgba(0,255,255,.06);}
+  50%{box-shadow:0 0 42px rgba(0,255,255,.6),inset 0 0 30px rgba(0,255,255,.12);}
+}
+.ml-btn::before{content:'';position:absolute;inset:0;background:currentColor;opacity:0;transition:opacity .15s;}
+.ml-btn:active::before{opacity:.1;}
+.ml-skip{
+  background:none;border:none;color:#333;
+  font-family:'Orbitron',monospace;font-size:.6rem;
+  letter-spacing:2px;cursor:pointer;text-decoration:underline;
+  padding:6px;
+}
+.ml-skip:hover{color:#666;}
+
 /* ═══════════════════════════════
    RESET & BASE
 ═══════════════════════════════ */
@@ -371,6 +449,25 @@ html,body{
 </head>
 <body>
 
+<!-- ── ADD TO HOME SCREEN NUDGE ── -->
+<div id="a2hs">
+  <span id="a2hsTxt">Add to Home Screen for the best experience</span>
+  <button id="a2hsOk">Add</button>
+  <button class="a2hs-close" id="a2hsClose">✕</button>
+</div>
+
+<!-- ── MOBILE LANDING (phone-only, shown before audio gate on phones) ── -->
+<div id="mobileLanding">
+  <div class="ml-title">RHYTHM<br>RIDE</div>
+  <div class="ml-sub">Full-body musical instrument</div>
+  <div class="ml-status">
+    <div class="dot wait" id="mlDot"></div>
+    <span id="mlStatus">Connecting to RhythmRide WiFi…</span>
+  </div>
+  <button class="ml-btn" id="mlStart">TAP TO START</button>
+  <button class="ml-skip" id="mlSkip">Skip — use demo mode</button>
+</div>
+
 <!-- ── AUDIO GATE ── -->
 <div id="gate">
   <h2>TAP TO START AUDIO</h2>
@@ -395,6 +492,7 @@ html,body{
       <button class="cbtn" id="btnSerial" title="Connect Arduino Uno via USB cable (Chrome/Edge only)">🔌 Connect Uno</button>
       <button class="cbtn" id="btnBle"    title="Connect ESP32 via Bluetooth">📶 BLE</button>
       <button class="cbtn" id="btnPhone"  title="Use phone accelerometer as stomp sensor">📱 Phone Stomp</button>
+      <button class="cbtn" id="btnCloud"  title="Connect via Cloudflare cloud relay (no local WiFi needed)">🌐 Cloud</button>
     </div>
     <button class="nbtn ngame" id="btnGame">📱 &nbsp;AR GAME MODE</button>
     <button class="nbtn njam"  id="btnJam">🎛️ &nbsp;JAM MODE</button>
@@ -559,6 +657,11 @@ html,body{
 ════════════════════════════════════════════════════════════ */
 'use strict';
 
+// ── Cloud relay URL ───────────────────────────────────────
+// After deploying the Cloudflare Worker, replace YOUR_SUBDOMAIN with your
+// worker subdomain (e.g. abc123). Leave as-is to disable auto-connect.
+const CLOUD_RELAY_URL = 'wss://rhythmride-relay.YOUR_SUBDOMAIN.workers.dev/ws?role=phone';
+
 // ── Global state ─────────────────────────────────────────
 const S = {
   score:0, combo:1, stomps:0, kcal:0,
@@ -664,8 +767,135 @@ $('btnWifi').onclick   = () => { setDot('wait'); bus.connectWebSocket('ws://192.
 $('btnSerial').onclick = () => bus.connectSerial(115200);
 $('btnBle').onclick    = () => bus.connectBluetooth();
 $('btnPhone').onclick  = () => { bus.enablePhoneSensors(); $('btnPhone').classList.add('active'); };
+$('btnCloud').onclick  = () => {
+  if (CLOUD_RELAY_URL.includes('YOUR_SUBDOMAIN')) {
+    const el = $('hlabel');
+    if (el) el.textContent = 'Cloud URL not configured — edit CLOUD_RELAY_URL in index.html';
+    return;
+  }
+  setDot('wait');
+  $('btnCloud').classList.add('active');
+  bus.connectCloudRelay(CLOUD_RELAY_URL);
+};
 
 updateConnLabel();
+
+// ══════════════════════════════════════════════════════════
+//  MOBILE DETECTION & PHONE-FIRST FLOW
+// ══════════════════════════════════════════════════════════
+const IS_PHONE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+                 ('ontouchstart' in window && navigator.maxTouchPoints > 1 && window.innerWidth < 900);
+
+const IS_STANDALONE = window.matchMedia('(display-mode: standalone)').matches ||
+                      window.navigator.standalone === true;
+
+// Mobile landing overlay logic
+(function initMobileLanding() {
+  const ml = $('mobileLanding');
+  if (!ml) return;
+
+  if (IS_PHONE) {
+    ml.classList.add('show');
+
+    // Auto-connect: try cloud relay first (if configured), else fall back to local WiFi
+    if (!CLOUD_RELAY_URL.includes('YOUR_SUBDOMAIN')) {
+      $('mlStatus').textContent = 'Connecting via cloud relay…';
+      $('btnCloud').classList.add('active');
+      bus.connectCloudRelay(CLOUD_RELAY_URL);
+    } else {
+      // Fallback: try local WiFi AP
+      const WS_URL = 'ws://192.168.4.1:81';
+      $('mlStatus').textContent = 'Connecting to RhythmRide WiFi…';
+      setDot('wait');
+      bus.connectWebSocket(WS_URL);
+    }
+
+    // Update mobile status dot when bus connects/disconnects
+    bus.on('connect', () => {
+      $('mlDot').className = 'dot ok';
+      $('mlStatus').textContent = 'Hardware connected!';
+    });
+    bus.on('disconnect', () => {
+      $('mlDot').className = 'dot wait';
+      $('mlStatus').textContent = 'Demo mode — stomp your phone!';
+    });
+    bus.on('status', ({text}) => {
+      const el = $('mlStatus'); if (el) el.textContent = text;
+    });
+
+    // "TAP TO START" → dismiss mobile landing, trigger audio gate
+    $('mlStart').addEventListener('click', () => {
+      ml.classList.remove('show');
+      // Trigger audio context resume (same as audio gate click)
+      Tone.start().then(() => {
+        S.audioReady = true;
+        buildSynths();
+        $('gate').style.opacity = '0';
+        $('gate').style.pointerEvents = 'none';
+        setTimeout(() => { $('gate').style.display = 'none'; }, 500);
+        $('adot').style.background = '#00ff88';
+        $('adot').style.boxShadow = '0 0 8px #00ff88';
+        $('adot').classList.remove('wait');
+        // Auto-navigate to game on phone
+        if (IS_PHONE) {
+          bus.enablePhoneSensors();
+          location.hash = '#game';
+        }
+      });
+    });
+
+    $('mlSkip').addEventListener('click', () => {
+      ml.classList.remove('show');
+      // Show audio gate normally
+    });
+  }
+})();
+
+// Add-to-Home-Screen nudge
+(function initA2HS() {
+  const banner = $('a2hs');
+  if (!banner) return;
+
+  // Don't show if already installed
+  if (IS_STANDALONE) return;
+
+  let deferredPrompt = null;
+
+  // Android native install prompt
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    deferredPrompt = e;
+    $('a2hsTxt').textContent = 'Install RhythmRide as an app for the best experience';
+    $('a2hsOk').textContent = 'Install';
+    banner.classList.add('show');
+  });
+
+  $('a2hsOk').addEventListener('click', () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then(() => { deferredPrompt = null; });
+    } else {
+      // iOS: show manual instructions
+      $('a2hsTxt').textContent = 'Tap the Share button then "Add to Home Screen"';
+      $('a2hsOk').style.display = 'none';
+      setTimeout(() => banner.classList.remove('show'), 5000);
+    }
+    banner.classList.remove('show');
+  });
+
+  $('a2hsClose').addEventListener('click', () => banner.classList.remove('show'));
+
+  // On iOS, show manual nudge after a short delay (no beforeinstallprompt)
+  if (IS_PHONE && /iPhone|iPad|iPod/.test(navigator.userAgent)) {
+    // Only show if not in standalone
+    setTimeout(() => {
+      $('a2hsTxt').textContent = 'iOS: tap Share → "Add to Home Screen" for full-screen mode';
+      $('a2hsOk').textContent = 'Got it';
+      $('a2hsOk').onclick = () => banner.classList.remove('show');
+      banner.classList.add('show');
+    }, 3000);
+  }
+})();
 
 // Auto-prompt serial on page load if Web Serial available (Uno via USB)
 if ('serial' in navigator) {

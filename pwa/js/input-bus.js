@@ -4,11 +4,12 @@
  * Normalises ALL input sources into one unified event stream.
  * Sources (in priority order, can be mixed):
  *   1. WebSocket  — ESP32 WiFi AP (ws://192.168.4.1:81)
- *   2. WebSerial  — Arduino Nano via USB (Chrome/Edge only)
- *   3. WebBluetooth — ESP32 BLE (future, skeleton ready)
- *   4. PhoneSensors — DeviceMotion stomp detection
- *   5. Keyboard   — always active as fallback
- *   6. Touch      — always active
+ *   2. Cloud      — Cloudflare Worker relay (wss://…/ws?role=phone)
+ *   3. WebSerial  — Arduino Nano via USB (Chrome/Edge only)
+ *   4. WebBluetooth — ESP32 BLE (future, skeleton ready)
+ *   5. PhoneSensors — DeviceMotion stomp detection
+ *   6. Keyboard   — always active as fallback
+ *   7. Touch      — always active
  *
  * Usage:
  *   const bus = new InputBus();
@@ -26,6 +27,7 @@
  *
  *   bus.send({t:'bpm', v:120});  // sends to all connected hardware
  *   bus.connectWebSocket('ws://192.168.4.1:81');
+ *   bus.connectCloudRelay('wss://rhythmride-relay.abc123.workers.dev/ws?role=phone');
  *   bus.connectSerial();         // triggers browser file picker
  *   bus.connectBluetooth();      // triggers browser BLE picker
  *   bus.enablePhoneSensors();
@@ -38,6 +40,10 @@ class InputBus {
         this._ws = null;
         this._wsUrl = null;
         this._wsRetry = null;
+        this._cloud = null;          // cloud relay WebSocket (Cloudflare Worker)
+        this._cloudUrl = null;
+        this._cloudRetry = null;
+        this._cloudBackoff = 1000;
         this._serial = null;
         this._serialReader = null;
         this._serialWriter = null;
@@ -48,7 +54,7 @@ class InputBus {
         this._steerSim = 0.5;      // keyboard-simulated steering
         this._lastStomp = 0;
         this._serialLineBuf = '';
-        this.sources = {ws: false, serial: false, ble: false, phone: false, kb: false};
+        this.sources = {ws: false, cloud: false, serial: false, ble: false, phone: false, kb: false};
     }
 
     // ── Event emitter ─────────────────────────────────────────────────────────
@@ -73,6 +79,9 @@ class InputBus {
         const s = JSON.stringify(obj);
         if (this._ws && this._ws.readyState === WebSocket.OPEN) {
             this._ws.send(s);
+        }
+        if (this._cloud && this._cloud.readyState === WebSocket.OPEN) {
+            this._cloud.send(s);
         }
         if (this._serialWriter) {
             this._serialWriter.write(new TextEncoder().encode(s + '\n')).catch(() => {});
@@ -128,7 +137,59 @@ class InputBus {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // SOURCE 2: WebSerial (Arduino Nano via USB cable)
+    // SOURCE 2: Cloud relay (Cloudflare Worker — phone path)
+    // ══════════════════════════════════════════════════════════════════════════
+    connectCloudRelay(url) {
+        this._cloudUrl = url;
+        this._cloudBackoff = 1000;
+        this._cloudConnect();
+    }
+
+    _cloudConnect() {
+        if (this._cloud) { try { this._cloud.close(); } catch (e) {} }
+        clearTimeout(this._cloudRetry);
+        this._emit('status', {text: 'Cloud relay connecting…', source: 'cloud'});
+
+        try {
+            this._cloud = new WebSocket(this._cloudUrl);
+        } catch (e) {
+            this._scheduleCloudRetry(); return;
+        }
+
+        this._cloud.onopen = () => {
+            this._cloudBackoff = 1000;
+            this.sources.cloud = true;
+            this._emit('connect', {source: 'cloud'});
+            this._emit('status', {text: 'Cloud relay connected', source: 'cloud'});
+        };
+        this._cloud.onmessage = ({data}) => {
+            try { this._dispatch(JSON.parse(data)); } catch (e) {}
+        };
+        this._cloud.onclose = () => {
+            this.sources.cloud = false;
+            this._emit('disconnect', {source: 'cloud'});
+            this._scheduleCloudRetry();
+        };
+        this._cloud.onerror = () => {
+            // 'onclose' will fire after error and trigger reconnect
+        };
+    }
+
+    _scheduleCloudRetry() {
+        if (!this._cloudUrl) return;
+        this._cloudRetry = setTimeout(() => this._cloudConnect(), this._cloudBackoff);
+        this._cloudBackoff = Math.min(this._cloudBackoff * 2, 5000);
+    }
+
+    disconnectCloudRelay() {
+        clearTimeout(this._cloudRetry);
+        this._cloudUrl = null;
+        if (this._cloud) { this._cloud.close(); this._cloud = null; }
+        this.sources.cloud = false;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // SOURCE 3: WebSerial (Arduino Nano via USB cable)
     // ══════════════════════════════════════════════════════════════════════════
     async connectSerial(baudRate = 115200) {
         if (!('serial' in navigator)) {
@@ -187,7 +248,7 @@ class InputBus {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // SOURCE 3: Web Bluetooth (ESP32 BLE — skeleton)
+    // SOURCE 4: Web Bluetooth (ESP32 BLE — skeleton)
     // ══════════════════════════════════════════════════════════════════════════
     async connectBluetooth() {
         if (!('bluetooth' in navigator)) {
@@ -225,7 +286,7 @@ class InputBus {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // SOURCE 4: Phone sensors (DeviceMotion stomp detection)
+    // SOURCE 5: Phone sensors (DeviceMotion stomp detection)
     // ══════════════════════════════════════════════════════════════════════════
     enablePhoneSensors() {
         if (this._phoneActive) return;
@@ -271,7 +332,7 @@ class InputBus {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // SOURCE 5 & 6: Keyboard + Touch (always available, demo fallback)
+    // SOURCE 6 & 7: Keyboard + Touch (always available, demo fallback)
     // ══════════════════════════════════════════════════════════════════════════
     enableKeyboard() {
         if (this._kbActive) return;

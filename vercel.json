@@ -1,0 +1,4 @@
+{
+  "outputDirectory": "pwa",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}

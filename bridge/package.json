@@ -1,0 +1,13 @@
+{
+  "name": "rhythmride-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Laptop bridge: Arduino Uno USB Serial ↔ Cloudflare Worker WebSocket relay",
+  "scripts": {
+    "start": "node bridge.js"
+  },
+  "dependencies": {
+    "serialport": "^12.0.0",
+    "ws": "^8.0.0"
+  }
+}
