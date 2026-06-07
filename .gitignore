@@ -1,1 +1,9 @@
 .claude/scheduled_tasks.lock
+
+# Bridge config contains real worker URL — keep out of git
+bridge/config.json
+
+# Node modules
+node_modules/
+bridge/node_modules/
+worker/node_modules/
